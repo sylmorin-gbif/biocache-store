@@ -66,6 +66,7 @@ class Cassandra3PersistenceManager  @Inject() (
   val map = new MapMaker().weakValues().makeMap[String, PreparedStatement]()
 
   val updateThreadPool = Executors.newFixedThreadPool(noOfUpdateThreads.toInt).asInstanceOf[ThreadPoolExecutor]
+  val executor = MoreExecutors.getExitingExecutorService(updateThreadPool)
 
   def getCacheSize = map.size()
 
@@ -437,7 +438,6 @@ class Cassandra3PersistenceManager  @Inject() (
   def putAsync(rowkey: String, entityName: String, keyValuePairs: Map[String, String], newRecord: Boolean, removeNullFields: Boolean) = {
 
     try {
-      val executor = MoreExecutors.getExitingExecutorService(updateThreadPool)
       val stmt: BoundStatement = createPutStatement(rowkey, entityName, keyValuePairs)
       val future = session.executeAsync(stmt)
       Futures.addCallback(future, new IngestCallback, executor)
@@ -484,10 +484,10 @@ class Cassandra3PersistenceManager  @Inject() (
     val statement = getPreparedStmt(sql, entityName)
 
     val boundStatement = if (keyValuePairsToUse.size == 1) {
-      val values = Array(rowkey, keyValuePairsToUse.values.head).map { x => new String(x.getBytes("UTF-8")) }
+      val values = Array(rowkey, keyValuePairsToUse.values.head).map { x => if (x == null) null else new String(x.getBytes("UTF-8")) }
       statement.bind(values: _*)
     } else {
-      val values = (Array(rowkey) ++ keyValuePairsToUse.values.toArray[String]).map { x => new String(x.getBytes("UTF-8")) }
+      val values = (Array(rowkey) ++ keyValuePairsToUse.values.toArray[String]).map { x => if (x == null) null else new String(x.getBytes("UTF-8")) }
       if (values == null) {
         throw new Exception("keyValuePairsToUse are null...")
       }
@@ -639,7 +639,7 @@ class Cassandra3PersistenceManager  @Inject() (
             s"allow filtering"
 
           val stmt = new SimpleStatement(pagingQuery)
-          stmt.setFetchSize(100)
+          stmt.setFetchSize(pageSize)
           stmt.setIdempotent(true)
           stmt.setReadTimeoutMillis(60000)
           stmt.setConsistencyLevel(ConsistencyLevel.ONE)
@@ -663,7 +663,7 @@ class Cassandra3PersistenceManager  @Inject() (
             val currentTime = System.currentTimeMillis
             val currentRowKey = row.getString(0)
             val recordsPerSec = (counter.toFloat) / ((currentTime - start).toFloat / 1000f)
-            val timeInSec = (currentTime - start) / 1000
+            val timeInSec = (currentTime - start) / pageSize
 
             logger.debug(s"$currentRowKey - records read: $counter.  Records per sec: $recordsPerSec,  Time taken: $timeInSec")
 
